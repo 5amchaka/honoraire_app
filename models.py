@@ -59,10 +59,11 @@ class PhaseIntervenant(db.Model):
     final_percent = db.Column(db.Float, nullable=True)  
     
     # Optionnel : on peut également stocker un montant calculé directement :
-    # final_amount = db.Column(db.Float, nullable=True)
+    final_amount = db.Column(db.Float, nullable=True)
     
     def __repr__(self):
         return (f"<PhaseIntervenant("
                 f"phase_id={self.phase_id}, "
                 f"intervenant_id={self.intervenant_id}, "
-                f"final_percent={self.final_percent})>")
+                f"final_percent={self.final_percent}, "
+                f"final_amount={self.final_amount})>")
