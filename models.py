@@ -67,3 +67,26 @@ class PhaseIntervenant(db.Model):
                 f"intervenant_id={self.intervenant_id}, "
                 f"final_percent={self.final_percent}, "
                 f"final_amount={self.final_amount})>")
+    
+# Dans models.py
+class PhaseIntervenantVerif(db.Model):
+    __tablename__ = 'phase_intervenants_verif'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    phase_id = db.Column(db.Integer, db.ForeignKey('phases.id'), nullable=False)
+    intervenant_id = db.Column(db.Integer, db.ForeignKey('intervenants.id'), nullable=False)
+    
+    # Montant vérif pour cette phase et cet intervenant
+    # Null signifie "non spécifié" (peut servir de tampon)
+    # 0 signifie "intervenant non impliqué dans cette phase"
+    montant_verif = db.Column(db.Float, nullable=True)
+    
+    # Référence aux objets associés
+    phase = db.relationship('Phase', backref='verifs')
+    intervenant = db.relationship('Intervenant', backref='verifs')
+    
+    def __repr__(self):
+        return (f"<PhaseIntervenantVerif("
+                f"phase_id={self.phase_id}, "
+                f"intervenant_id={self.intervenant_id}, "
+                f"montant_verif={self.montant_verif})>")

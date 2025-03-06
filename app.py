@@ -1,6 +1,7 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for, flash
-from models import db, Project, Phase, Intervenant, PhaseIntervenant
+
+from models import db, Project, Phase, Intervenant, PhaseIntervenant, PhaseIntervenantVerif
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'  
@@ -138,6 +139,7 @@ def project_allocation(project_id):
                           allocation_data=allocation_data,
                           intervenant_totals=intervenant_totals)
 
+# Route modifiée pour le calcul d'allocation
 @app.route('/project/<int:project_id>/allocation/calculate', methods=['POST'])
 def calculate_allocation(project_id):
     project = Project.query.get_or_404(project_id)
@@ -147,57 +149,102 @@ def calculate_allocation(project_id):
         flash("Le projet doit avoir des phases et des intervenants pour calculer l'allocation", "danger")
         return redirect(url_for('project_allocation', project_id=project.id))
     
-    # Identifier l'intervenant MB (s'il existe) qui servira de variable d'ajustement
+    # Identifier l'intervenant MB (s'il existe) qui servira de variable d'ajustement par défaut
     mb_intervenant = next((i for i in project.intervenants if i.name.lower() == 'mb'), None)
     
     # Si MB n'existe pas, prendre le dernier intervenant comme variable d'ajustement
     if not mb_intervenant and project.intervenants:
         mb_intervenant = project.intervenants[-1]
-        flash(f"Aucun intervenant 'MB' trouvé, '{mb_intervenant.name}' sera utilisé comme variable d'ajustement", "warning")
+        flash(f"Aucun intervenant 'MB' trouvé, '{mb_intervenant.name}' sera utilisé comme variable d'ajustement par défaut", "warning")
+    
+    # Récupérer les montants vérif détaillés
+    verifs = PhaseIntervenantVerif.query.filter(
+        PhaseIntervenantVerif.phase_id.in_([phase.id for phase in project.phases])
+    ).all()
+    
+    # Créer un dictionnaire pour accéder facilement aux verifs
+    verif_data = {}
+    for verif in verifs:
+        verif_data[(verif.phase_id, verif.intervenant_id)] = verif.montant_verif
     
     # Supprimer les allocations existantes
     PhaseIntervenant.query.filter(
         PhaseIntervenant.phase_id.in_([phase.id for phase in project.phases])
     ).delete(synchronize_session=False)
     
-    # Liste des intervenants sans l'ajusteur (MB ou autre)
-    regular_intervenants = [i for i in project.intervenants if i != mb_intervenant]
-    
-    # Calculer les pourcentages cibles globaux pour chaque intervenant
-    # Ces pourcentages représentent ce que chaque intervenant devrait obtenir au total
-    target_percentages = {}
-    for intervenant in project.intervenants:
-        if intervenant.montant_verif:
-            target_percentages[intervenant.id] = (intervenant.montant_verif / project.total_marche) * 100
-        else:
-            # Si pas de montant vérif, valeur par défaut
-            target_percentages[intervenant.id] = 0
-    
-    # Première passe : allouer selon les pourcentages cibles pour les intervenants réguliers
+    # Initialiser le dictionnaire d'allocations
     allocation_by_phase_intervenant = {}
-    remaining_by_phase = {}
     
+    # Première passe : traiter les phases une par une
     for phase in project.phases:
         phase_amount = project.total_marche * phase.percentage / 100
         remaining_percent = 100.0  # Pourcentage restant pour cette phase
+        remaining_amount = phase_amount  # Montant restant pour cette phase
         phase_allocations = {}
         
-        # Allouer proportionnellement à chaque intervenant régulier
-        total_target_percent = sum(target_percentages[i.id] for i in regular_intervenants)
+        # Identifier les intervenants avec des montants vérif définis pour cette phase
+        fixed_intervenants = []
+        adjustable_intervenants = []
+        zero_intervenants = []
         
-        if total_target_percent > 0:
-            for intervenant in regular_intervenants:
-                # Pourcentage calculé proportionnellement au poids de l'intervenant
-                if total_target_percent > 0:
-                    alloc_percent = (target_percentages[intervenant.id] / total_target_percent) * 100
-                else:
-                    alloc_percent = 0
-                
-                # Limiter le pourcentage au restant disponible
-                if alloc_percent > remaining_percent:
-                    alloc_percent = remaining_percent
-                
-                # Calculer le montant
+        for intervenant in project.intervenants:
+            verif_montant = verif_data.get((phase.id, intervenant.id))
+            
+            if verif_montant is not None:
+                if verif_montant > 0:
+                    fixed_intervenants.append(intervenant)
+                elif verif_montant == 0:
+                    zero_intervenants.append(intervenant)
+            else:
+                # Si pas de montant vérif défini, l'intervenant est ajustable
+                adjustable_intervenants.append(intervenant)
+        
+        # Traiter d'abord les intervenants avec des montants vérif fixes
+        total_fixed_amount = 0
+        for intervenant in fixed_intervenants:
+            verif_montant = verif_data.get((phase.id, intervenant.id), 0)
+            
+            # Calculer le pourcentage que cela représente de la phase
+            alloc_percent = (verif_montant / phase_amount) * 100
+            
+            # Limiter le pourcentage au restant disponible si nécessaire
+            if alloc_percent > remaining_percent:
+                alloc_percent = remaining_percent
+                verif_montant = phase_amount * (alloc_percent / 100)
+            
+            # Stocker l'allocation
+            phase_allocations[(phase.id, intervenant.id)] = {
+                'percent': alloc_percent,
+                'amount': verif_montant
+            }
+            
+            # Mettre à jour les pourcentages et montants restants
+            remaining_percent -= alloc_percent
+            remaining_amount -= verif_montant
+            total_fixed_amount += verif_montant
+        
+        # Déterminer quel intervenant sert de tampon pour cette phase
+        # Si MB a un montant vérif défini pour cette phase, c'est un autre intervenant qui sera le tampon
+        buffer_intervenant = None
+        
+        # Vérifier si MB est dans les fixed_intervenants
+        if mb_intervenant and mb_intervenant in fixed_intervenants:
+            # MB a un montant fixe pour cette phase, choisir un autre tampon parmi les ajustables
+            if adjustable_intervenants:
+                buffer_intervenant = adjustable_intervenants[0]
+                adjustable_intervenants.remove(buffer_intervenant)
+        else:
+            # MB n'a pas de montant fixe, il est le tampon par défaut
+            buffer_intervenant = mb_intervenant
+            if buffer_intervenant in adjustable_intervenants:
+                adjustable_intervenants.remove(buffer_intervenant)
+        
+        # Répartir le pourcentage restant équitablement entre les intervenants ajustables (hors tampon)
+        if adjustable_intervenants and remaining_percent > 0:
+            per_adjustable_percent = remaining_percent / len(adjustable_intervenants)
+            
+            for intervenant in adjustable_intervenants:
+                alloc_percent = per_adjustable_percent
                 alloc_amount = phase_amount * (alloc_percent / 100)
                 
                 # Stocker l'allocation
@@ -208,26 +255,19 @@ def calculate_allocation(project_id):
                 
                 # Mettre à jour le pourcentage restant
                 remaining_percent -= alloc_percent
+                remaining_amount -= alloc_amount
         
-        # Stocker le pourcentage restant pour MB
-        remaining_by_phase[phase.id] = remaining_percent
+        # Attribuer le reste au tampon (si défini)
+        if buffer_intervenant and remaining_percent > 0:
+            phase_allocations[(phase.id, buffer_intervenant.id)] = {
+                'percent': remaining_percent,
+                'amount': remaining_amount
+            }
+        
+        # Ajouter les allocations de cette phase au dictionnaire global
         allocation_by_phase_intervenant.update(phase_allocations)
     
-    # Deuxième passe : allouer le reste à MB et vérifier les écarts
-    if mb_intervenant:
-        for phase in project.phases:
-            phase_amount = project.total_marche * phase.percentage / 100
-            remaining_percent = remaining_by_phase[phase.id]
-            
-            # Allouer le reste à MB
-            mb_amount = phase_amount * (remaining_percent / 100)
-            
-            allocation_by_phase_intervenant[(phase.id, mb_intervenant.id)] = {
-                'percent': remaining_percent,
-                'amount': mb_amount
-            }
-    
-    # Vérifier les écarts par rapport aux montants vérif
+    # Deuxième passe : vérifier les écarts par rapport aux montants vérif totaux
     intervenant_totals = {}
     for intervenant in project.intervenants:
         # Calculer le total pour cet intervenant sur toutes les phases
@@ -236,7 +276,7 @@ def calculate_allocation(project_id):
             for phase in project.phases
         )
         
-        # Calculer l'écart par rapport à la vérif
+        # Calculer l'écart par rapport à la vérif globale
         if intervenant.montant_verif:
             ecart = total_amount - intervenant.montant_verif
             ecart_percent = (ecart / intervenant.montant_verif) * 100
@@ -251,57 +291,66 @@ def calculate_allocation(project_id):
             'ecart_percent': ecart_percent
         }
     
-    # Troisième passe : ajuster pour minimiser les écarts (si MB est présent)
-    if mb_intervenant:
-        # Identifier les intervenants qui ont un écart > 5%
-        intervenants_to_adjust = []
-        for intervenant in regular_intervenants:
-            if intervenant_totals[intervenant.id]['ecart_percent'] > 5:
-                intervenants_to_adjust.append(intervenant)
+    # Troisième passe : ajuster les phases où les intervenants sont ajustables
+    # pour respecter la contrainte de ±5% sur les montants vérif globaux
+    adjustments_needed = []
+    
+    for intervenant in project.intervenants:
+        if intervenant == mb_intervenant:
+            continue  # On ne fait pas d'ajustements sur MB qui est notre tampon principal
+            
+        if intervenant.montant_verif and abs(intervenant_totals[intervenant.id]['ecart_percent']) > 5:
+            # Cet intervenant a besoin d'un ajustement
+            ecart = intervenant_totals[intervenant.id]['ecart']
+            adjustments_needed.append((intervenant, ecart))
+    
+    # Trier les ajustements par écart absolu décroissant (traiter d'abord les plus grands écarts)
+    adjustments_needed.sort(key=lambda x: abs(x[1]), reverse=True)
+    
+    # Pour chaque intervenant nécessitant un ajustement
+    for intervenant, ecart in adjustments_needed:
+        # Identifier les phases où l'intervenant est ajustable
+        adjustable_phases = []
+        for phase in project.phases:
+            if (phase.id, intervenant.id) not in verif_data or verif_data[(phase.id, intervenant.id)] is None:
+                adjustable_phases.append(phase)
         
-        # Ajuster pour chaque intervenant qui dépasse l'écart
-        for intervenant in intervenants_to_adjust:
-            target_amount = intervenant.montant_verif * 1.05  # +5% max
-            excess_amount = intervenant_totals[intervenant.id]['amount'] - target_amount
+        # Si pas de phases ajustables, on ne peut rien faire
+        if not adjustable_phases:
+            continue
+        
+        # Répartir l'ajustement entre les phases ajustables
+        adjustment_per_phase = ecart / len(adjustable_phases)
+        
+        for phase in adjustable_phases:
+            phase_amount = project.total_marche * phase.percentage / 100
             
-            if excess_amount <= 0:
-                continue  # Pas besoin d'ajuster
+            # Récupérer l'allocation actuelle
+            current_allocation = allocation_by_phase_intervenant.get((phase.id, intervenant.id), {'percent': 0, 'amount': 0})
+            buffer_allocation = allocation_by_phase_intervenant.get((phase.id, mb_intervenant.id), {'percent': 0, 'amount': 0})
             
-            # Répartir l'excès entre les phases
-            for phase in project.phases:
-                phase_key = (phase.id, intervenant.id)
-                mb_key = (phase.id, mb_intervenant.id)
-                
-                if phase_key not in allocation_by_phase_intervenant:
-                    continue
-                
-                phase_amount = project.total_marche * phase.percentage / 100
-                current_allocation = allocation_by_phase_intervenant[phase_key]
-                
-                # Calculer l'ajustement proportionnel pour cette phase
-                phase_proportion = current_allocation['amount'] / intervenant_totals[intervenant.id]['amount']
-                amount_to_reduce = excess_amount * phase_proportion
-                
-                # Limiter la réduction au montant actuel
-                if amount_to_reduce > current_allocation['amount']:
-                    amount_to_reduce = current_allocation['amount']
-                
-                # Calculer les nouveaux pourcentages
-                percent_to_reduce = (amount_to_reduce / phase_amount) * 100
-                new_percent = current_allocation['percent'] - percent_to_reduce
-                new_amount = current_allocation['amount'] - amount_to_reduce
-                
-                # Mettre à jour l'allocation
-                allocation_by_phase_intervenant[phase_key] = {
-                    'percent': new_percent,
-                    'amount': new_amount
-                }
-                
-                # Transférer le pourcentage à MB
-                mb_allocation = allocation_by_phase_intervenant.get(mb_key, {'percent': 0, 'amount': 0})
-                mb_allocation['percent'] += percent_to_reduce
-                mb_allocation['amount'] += amount_to_reduce
-                allocation_by_phase_intervenant[mb_key] = mb_allocation
+            # Calculer le nouvel amount après ajustement
+            new_amount = current_allocation['amount'] - adjustment_per_phase
+            
+            # Vérifier que le nouveau montant est positif
+            if new_amount < 0:
+                new_amount = 0
+            
+            # Calculer le nouveau pourcentage
+            new_percent = (new_amount / phase_amount) * 100
+            delta_percent = current_allocation['percent'] - new_percent
+            
+            # Mettre à jour l'allocation
+            allocation_by_phase_intervenant[(phase.id, intervenant.id)] = {
+                'percent': new_percent,
+                'amount': new_amount
+            }
+            
+            # Transférer la différence au tampon (MB)
+            if mb_intervenant:
+                buffer_allocation['percent'] += delta_percent
+                buffer_allocation['amount'] += adjustment_per_phase
+                allocation_by_phase_intervenant[(phase.id, mb_intervenant.id)] = buffer_allocation
     
     # Enregistrer toutes les allocations dans la base de données
     for (phase_id, intervenant_id), allocation in allocation_by_phase_intervenant.items():
@@ -318,6 +367,162 @@ def calculate_allocation(project_id):
     
     flash("L'allocation a été calculée avec succès", "success")
     return redirect(url_for('project_allocation', project_id=project.id))
+
+# Dans app.py, ajouter ces nouvelles routes
+
+@app.route('/project/<int:project_id>/verif-detail')
+def project_verif_detail(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    # Vérifier que le projet a des phases et des intervenants
+    if not project.phases:
+        flash("Veuillez d'abord ajouter des phases au projet", "warning")
+        return redirect(url_for('project_detail', project_id=project.id))
+    
+    if not project.intervenants:
+        flash("Veuillez d'abord ajouter des intervenants au projet", "warning")
+        return redirect(url_for('project_detail', project_id=project.id))
+    
+    # Récupérer les montants vérif existants
+    verifs = PhaseIntervenantVerif.query.filter(
+        PhaseIntervenantVerif.phase_id.in_([phase.id for phase in project.phases])
+    ).all()
+    
+    # Créer un dictionnaire pour accéder facilement aux verifs
+    verif_data = {}
+    for verif in verifs:
+        verif_data[(verif.phase_id, verif.intervenant_id)] = verif
+    
+    # Calculer les totaux par intervenant
+    intervenant_verif_totals = {}
+    for intervenant in project.intervenants:
+        total_verif = sum(
+            verif.montant_verif for verif in verifs 
+            if verif.intervenant_id == intervenant.id and verif.montant_verif is not None
+        )
+        intervenant_verif_totals[intervenant.id] = total_verif
+    
+    # Calculer le total des pourcentages et montants des phases
+    phases_total_percent = sum(phase.percentage for phase in project.phases)
+    phases_total_amount = sum(project.total_marche * phase.percentage / 100 for phase in project.phases)
+    
+    return render_template('project_verif_detail.html', 
+                           project=project,
+                           verif_data=verif_data,
+                           intervenant_verif_totals=intervenant_verif_totals,
+                           phases_total_percent=phases_total_percent,
+                           phases_total_amount=phases_total_amount)
+
+@app.route('/project/<int:project_id>/verif-detail/save', methods=['POST'])
+def save_verif_detail(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    # Supprimer les verifs existants
+    PhaseIntervenantVerif.query.filter(
+        PhaseIntervenantVerif.phase_id.in_([phase.id for phase in project.phases])
+    ).delete(synchronize_session=False)
+    
+    # Récupérer les données du formulaire et créer de nouveaux verifs
+    for phase in project.phases:
+        for intervenant in project.intervenants:
+            field_name = f"verif_{phase.id}_{intervenant.id}"
+            verif_value = request.form.get(field_name, '')
+            
+            # Convertir en float si non vide
+            if verif_value.strip():
+                try:
+                    montant_verif = float(verif_value)
+                    # Créer un nouvel enregistrement PhaseIntervenantVerif
+                    verif = PhaseIntervenantVerif(
+                        phase_id=phase.id,
+                        intervenant_id=intervenant.id,
+                        montant_verif=montant_verif
+                    )
+                    db.session.add(verif)
+                except ValueError:
+                    flash(f"Valeur invalide pour {phase.name} - {intervenant.name}: {verif_value}", "danger")
+                    return redirect(url_for('project_verif_detail', project_id=project.id))
+    
+    db.session.commit()
+    flash("Les montants vérif ont été enregistrés avec succès", "success")
+    return redirect(url_for('project_verif_detail', project_id=project.id))
+
+@app.route('/project/<int:project_id>/delete', methods=['POST'])
+def delete_project(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    # Supprimer toutes les allocations liées au projet
+    PhaseIntervenant.query.filter(
+        PhaseIntervenant.phase_id.in_([phase.id for phase in project.phases])
+    ).delete(synchronize_session=False)
+    
+    # Supprimer toutes les vérifications liées au projet
+    if 'PhaseIntervenantVerif' in globals():  # Vérification si le modèle existe
+        PhaseIntervenantVerif.query.filter(
+            PhaseIntervenantVerif.phase_id.in_([phase.id for phase in project.phases])
+        ).delete(synchronize_session=False)
+    
+    # Supprimer toutes les phases et intervenants du projet
+    for phase in project.phases:
+        db.session.delete(phase)
+    
+    for intervenant in project.intervenants:
+        db.session.delete(intervenant)
+    
+    # Supprimer le projet lui-même
+    db.session.delete(project)
+    db.session.commit()
+    
+    flash(f"Le projet '{project.name}' a été supprimé avec succès", "success")
+    return redirect(url_for('index'))
+
+@app.route('/project/<int:project_id>/edit', methods=['GET', 'POST'])
+def edit_project(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    if request.method == 'POST':
+        # Récupérer les infos du formulaire
+        project_name = request.form.get('project_name')
+        total_marche = request.form.get('total_marche')
+        
+        # Mettre à jour le projet
+        project.name = project_name
+        project.total_marche = float(total_marche)
+        db.session.commit()
+        
+        flash("Les modifications ont été enregistrées avec succès", "success")
+        return redirect(url_for('project_detail', project_id=project.id))
+    else:
+        # Afficher le formulaire d'édition
+        return render_template('edit_project.html', project=project)
+
+@app.route('/project/<int:project_id>/phases/edit', methods=['GET', 'POST'])
+def edit_phases(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    if request.method == 'POST':
+        # Récupérer les pourcentages modifiés
+        for phase in project.phases:
+            percentage_key = f'percentage_{phase.id}'
+            if percentage_key in request.form:
+                try:
+                    phase.percentage = float(request.form[percentage_key])
+                except ValueError:
+                    flash(f"Valeur invalide pour la phase {phase.name}", "danger")
+                    return redirect(url_for('edit_phases', project_id=project.id))
+        
+        # Vérifier que la somme des pourcentages est égale à 100%
+        total_percentage = sum(phase.percentage for phase in project.phases)
+        if abs(total_percentage - 100.0) > 0.01:  # Tolérance de 0.01% pour les erreurs d'arrondi
+            flash(f"La somme des pourcentages doit être égale à 100% (actuellement {total_percentage:.2f}%)", "danger")
+            return redirect(url_for('edit_phases', project_id=project.id))
+        
+        db.session.commit()
+        flash("Les pourcentages des phases ont été modifiés avec succès", "success")
+        return redirect(url_for('project_detail', project_id=project.id))
+    else:
+        # Afficher le formulaire d'édition des phases
+        return render_template('edit_phases.html', project=project)
 
 # -- Lancement serveur -------------------------------------------
 if __name__ == '__main__':
