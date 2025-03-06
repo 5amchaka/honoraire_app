@@ -3,7 +3,7 @@ from flask import Flask, render_template, request, redirect, url_for
 from models import db, Project, Phase, Intervenant, PhaseIntervenant  # Importation des modèles
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/app.db'  
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'  
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialiser l'instance de db avec l'application
