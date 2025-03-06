@@ -2,7 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 class Project(db.Model):
-    _tablename_ = 'projects'
+    __tablename__ = 'projects'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False) # Nom du projet
@@ -65,3 +65,4 @@ class PhaseIntervenant(db.Model):
                 f"phase_id={self.phase_id}, "
                 f"intervenant_id={self.intervenant_id}, "
                 f"final_percent={self.final_percent})>")
+    

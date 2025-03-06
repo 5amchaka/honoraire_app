@@ -1,11 +1,19 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for
-from flask_sqlalchemy import SQLAlchemy
+from models import db, Project, Phase, Intervenant, PhaseIntervenant  # Importation des modèles
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/app.db'  # Préciser le chemin vers la BD
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+
+# Initialiser l'instance de db avec l'application
+db.init_app(app)
+
+# Remplacer @app.before_first_request qui est déprécié
+@app.cli.command("init-db")
+def create_tables():
+    db.create_all()
+    print("Base de données initialisée !")
 
 # -- Modèles -----------------------------------------------------
 class Project(db.Model):
@@ -80,6 +88,32 @@ def create_project():
     else:
         # Simplement afficher le formulaire
         return render_template('create_project.html')
+
+@app.route('/project/<int:project_id>')
+def project_detail(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    # Calculer le total des pourcentages et montants des phases
+    phases_total_percent = sum(phase.percentage for phase in project.phases)
+    phases_total_amount = sum(project.total_marche * phase.percentage / 100 for phase in project.phases)
+    
+    return render_template('project_detail.html', 
+                           project=project,
+                           phases_total_percent=phases_total_percent,
+                           phases_total_amount=phases_total_amount)
+
+@app.route('/project/<int:project_id>/phase/add', methods=['POST'])
+def add_phase(project_id):
+    project = Project.query.get_or_404(project_id)
+    
+    phase_name = request.form.get('phase_name')
+    percentage = float(request.form.get('percentage'))
+    
+    new_phase = Phase(name=phase_name, percentage=percentage, project_id=project.id)
+    db.session.add(new_phase)
+    db.session.commit()
+    
+    return redirect(url_for('project_detail', project_id=project.id))
 
 # -- Lancement serveur -------------------------------------------
 if __name__ == '__main__':

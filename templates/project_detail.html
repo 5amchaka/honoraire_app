@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Détail du Projet</title>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h1>Détail du Projet: {{ project.name }}</h1>
+    <p>Total Marché: {{ project.total_marche }} €</p>
+    
+    <h2>Phases du Projet</h2>
+    <form method="POST" action="{{ url_for('add_phase', project_id=project.id) }}">
+        <h3>Ajouter une phase</h3>
+        <label for="phase_name">Nom de la Phase:</label>
+        <input type="text" name="phase_name" id="phase_name" required>
+        
+        <label for="percentage">Pourcentage (%):</label>
+        <input type="number" step="0.01" name="percentage" id="percentage" required>
+        
+        <input type="submit" value="Ajouter Phase">
+    </form>
+    
+    <table border="1">
+        <tr>
+            <th>Nom</th>
+            <th>Pourcentage (%)</th>
+            <th>Montant (€)</th>
+        </tr>
+        {% for phase in project.phases %}
+        <tr>
+            <td>{{ phase.name }}</td>
+            <td>{{ phase.percentage }}</td>
+            <td>{{ (project.total_marche * phase.percentage / 100) | round(2) }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+            <td><strong>Total</strong></td>
+            <td>{{ phases_total_percent }}%</td>
+            <td>{{ phases_total_amount }} €</td>
+        </tr>
+    </table>
+    
+    <!-- Dans project_detail.html, ajoutez ceci après la table des phases -->
+<h2>Intervenants du Projet</h2>
+<form method="POST" action="{{ url_for('add_intervenant', project_id=project.id) }}">
+    <h3>Ajouter un intervenant</h3>
+    <label for="intervenant_name">Nom de l'Intervenant:</label>
+    <input type="text" name="intervenant_name" id="intervenant_name" required>
+    
+    <label for="montant_verif">Montant Vérif (€):</label>
+    <input type="number" step="0.01" name="montant_verif" id="montant_verif" required>
+    
+    <input type="submit" value="Ajouter Intervenant">
+</form>
+
+<table border="1">
+    <tr>
+        <th>Nom</th>
+        <th>Montant Vérif (€)</th>
+        <th>% du Total</th>
+    </tr>
+    {% for intervenant in project.intervenants %}
+    <tr>
+        <td>{{ intervenant.name }}</td>
+        <td>{{ intervenant.montant_verif }}</td>
+        <td>{{ (intervenant.montant_verif / project.total_marche * 100) | round(2) }}%</td>
+    </tr>
+    {% endfor %}
+    <tr>
+        <td><strong>Total</strong></td>
+        <td>{{ intervenants_total_verif }} €</td>
+        <td>{{ intervenants_total_percent }}%</td>
+    </tr>
+</table>
+    <p><a href="{{ url_for('index') }}">Retour à la liste des projets</a></p>
+</body>
+</html>
