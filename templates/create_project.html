@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Créer un projet</title>
+</head>
+<body>
+    <h1>Créer un nouveau Projet</h1>
+    <form method="POST" action="{{ url_for('create_project') }}">
+        <label for="project_name">Nom du Projet :</label>
+        <input type="text" name="project_name" id="project_name" required>
+        <br><br>
+        <label for="total_marche">Total Marché :</label>
+        <input type="number" step="0.01" name="total_marche" id="total_marche" required>
+        <br><br>
+        <input type="submit" value="Enregistrer">
+    </form>
+</body>
+</html>
