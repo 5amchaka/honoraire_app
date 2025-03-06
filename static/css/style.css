@@ -57,3 +57,58 @@ a {
 a:hover {
     text-decoration: underline;
 }
+/* Complément aux styles Bootstrap */
+body {
+    padding-top: 20px;
+    padding-bottom: 40px;
+}
+
+.table th, .table td {
+    vertical-align: middle;
+}
+
+.card {
+    margin-bottom: 20px;
+}
+
+.form-section {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 5px;
+    margin-bottom: 30px;
+}
+
+.phase-card, .intervenant-card {
+    margin-bottom: 15px;
+}
+
+.summary-row {
+    font-weight: bold;
+    background-color: #f2f2f2;
+}
+
+/* Styles pour le tableau d'allocation */
+.allocation-table th {
+    background-color: #e9ecef;
+}
+
+.amount-cell {
+    text-align: right;
+}
+
+.percent-cell {
+    font-size: 0.85em;
+    color: #6c757d;
+}
+
+.alert-range {
+    font-weight: bold;
+}
+
+.alert-danger {
+    color: #721c24;
+}
+
+.alert-success {
+    color: #155724;
+}
