@@ -3,14 +3,8 @@
 <head>
     <meta charset="utf-8"/>
     <title>Accueil - Liste des Projets</title>
-    
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<tr>
-    <td>{{ project.id }}</td>
-    <td><a href="{{ url_for('project_detail', project_id=project.id) }}">{{ project.name }}</a></td>
-    <td>{{ project.total_marche }}</td>
-</tr>
 <body>
     <h1>Liste des Projets</h1>
 
@@ -25,7 +19,7 @@
         {% for project in projects %}
         <tr>
             <td>{{ project.id }}</td>
-            <td>{{ project.name }}</td>
+            <td><a href="{{ url_for('project_detail', project_id=project.id) }}">{{ project.name }}</a></td>
             <td>{{ project.total_marche }}</td>
         </tr>
         {% endfor %}

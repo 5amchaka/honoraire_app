@@ -1,8 +1,9 @@
 from flask_sqlalchemy import SQLAlchemy
+
 db = SQLAlchemy()
 
 class Project(db.Model):
-    __tablename__ = 'projects'
+    __tablename__ = 'projects'  # Correction ici (double underscore)
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False) # Nom du projet
@@ -15,7 +16,7 @@ class Project(db.Model):
     intervenants = db.relationship('Intervenant', backref='project', lazy=True)
 
     def __repr__(self):
-        return f"<Project(id={self.name}, name='{self.name}')>"
+        return f"<Project(id={self.id}, name='{self.name}')>"
     
 class Phase(db.Model):
     __tablename__ = 'phases'
@@ -36,7 +37,7 @@ class Intervenant(db.Model):
     __tablename__ = 'intervenants'
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)  # Nom ou rôle de l’intervenant (ex : Architecte, MB, etc.)
+    name = db.Column(db.String(100), nullable=False)  # Nom ou rôle de l'intervenant (ex : Architecte, MB, etc.)
     montant_verif = db.Column(db.Float, nullable=True)  # Montant 'vérif' souhaité sur l'ensemble du projet
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
     
@@ -65,4 +66,3 @@ class PhaseIntervenant(db.Model):
                 f"phase_id={self.phase_id}, "
                 f"intervenant_id={self.intervenant_id}, "
                 f"final_percent={self.final_percent})>")
-    
